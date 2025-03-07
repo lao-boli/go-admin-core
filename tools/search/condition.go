@@ -7,6 +7,8 @@ type Condition interface {
 	SetOr(k string, v []interface{})
 	SetOrder(k string)
 	SetJoinOn(t, on string) Condition
+	WithAliasMap(aliasMap map[string]string) Condition
+	GetAliasMap() map[string]string
 }
 
 type GormCondition struct {
@@ -15,9 +17,10 @@ type GormCondition struct {
 }
 
 type GormPublic struct {
-	Where map[string][]interface{}
-	Order []string
-	Or    map[string][]interface{}
+	Where    map[string][]interface{}
+	Order    []string
+	Or       map[string][]interface{}
+	AliasMap map[string]string
 }
 
 type GormJoin struct {
@@ -64,12 +67,28 @@ func (e *GormCondition) SetJoinOn(t, on string) Condition {
 	return join
 }
 
+func (c *GormCondition) WithAliasMap(aliasMap map[string]string) Condition {
+	c.AliasMap = aliasMap
+	return c
+}
+func (c *GormJoin) WithAliasMap(aliasMap map[string]string) Condition {
+	c.AliasMap = aliasMap
+	return c
+}
+func (c *GormCondition) GetAliasMap() map[string]string {
+	return c.AliasMap
+}
+func (c *GormJoin) GetAliasMap() map[string]string {
+	return c.AliasMap
+}
+
 type resolveSearchTag struct {
-	Type   string
-	Column string
-	Table  string
-	On     []string
-	Join   string
+	Type      string
+	Column    string
+	Table     string
+	On        []string
+	Join      string
+	JoinAlias string
 }
 
 // makeTag 解析search的tag标签
@@ -102,6 +121,10 @@ func makeTag(tag string) *resolveSearchTag {
 		case "join":
 			if len(ts) > 1 {
 				r.Join = ts[1]
+			}
+		case "alias":
+			if len(ts) > 1 {
+				r.JoinAlias = ts[1]
 			}
 		}
 	}

@@ -34,10 +34,10 @@ func ResolveSearchQuery(driver string, q interface{}, condition Condition) {
 	var ok bool
 	var t *resolveSearchTag
 
-	var sep = "`"
-	if driver == Postgres {
-		sep = "\""
-	}
+	//var sep = "`"
+	//if driver == Postgres {
+	//	sep = "\""
+	//}
 
 	for i := 0; i < qType.NumField(); i++ {
 		tag, ok = "", false
@@ -67,10 +67,17 @@ func ResolveSearchQuery(driver string, q interface{}, condition Condition) {
 func pgSql(driver string, t *resolveSearchTag, condition Condition, qValue reflect.Value, i int) {
 	switch t.Type {
 	case "left":
-		//左关联
-		join := condition.SetJoinOn(t.Type, fmt.Sprintf(
-			"left join %s on %s.%s = %s.%s", t.Join, t.Join, t.On[0], t.Table, t.On[1],
-		))
+		joinAlias := t.JoinAlias
+		if t.JoinAlias == "" {
+			joinAlias = t.Join
+		}
+		leftTable := t.Join
+		rightTable := t.Table
+		aliasMap := make(map[string]string)
+		aliasMap[leftTable] = joinAlias
+		joinCondition := fmt.Sprintf("%s.%s = %s.%s", joinAlias, t.On[0], rightTable, t.On[1])
+		join := condition.SetJoinOn(t.Type, fmt.Sprintf("left join `%s` as `%s` on %s", leftTable, joinAlias, joinCondition))
+		join.WithAliasMap(aliasMap)
 		ResolveSearchQuery(driver, qValue.Field(i).Interface(), join)
 	case "exact", "iexact":
 		condition.SetWhere(fmt.Sprintf("%s.%s = ?", t.Table, t.Column), []interface{}{qValue.Field(i).Interface()})
@@ -111,42 +118,61 @@ func pgSql(driver string, t *resolveSearchTag, condition Condition, qValue refle
 func otherSql(driver string, t *resolveSearchTag, condition Condition, qValue reflect.Value, i int) {
 	switch t.Type {
 	case "left":
-		//左关联
-		join := condition.SetJoinOn(t.Type, fmt.Sprintf(
-			"left join `%s` on `%s`.`%s` = `%s`.`%s`",
-			t.Join,
-			t.Join,
-			t.On[0],
-			t.Table,
-			t.On[1],
-		))
+		joinAlias := t.JoinAlias
+		if t.JoinAlias == "" {
+			joinAlias = t.Join
+		}
+		leftTable := t.Join
+		rightTable := t.Table
+		aliasMap := make(map[string]string)
+		aliasMap[leftTable] = joinAlias
+		joinCondition := fmt.Sprintf("%s.%s = %s.%s", joinAlias, t.On[0], rightTable, t.On[1])
+		join := condition.SetJoinOn(t.Type, fmt.Sprintf("left join `%s` as `%s` on %s", leftTable, joinAlias, joinCondition))
+		join.WithAliasMap(aliasMap)
 		ResolveSearchQuery(driver, qValue.Field(i).Interface(), join)
+
 	case "exact", "iexact":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` = ?", t.Table, t.Column), []interface{}{qValue.Field(i).Interface()})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` = ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{qValue.Field(i).Interface()})
 	case "contains", "icontains":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` like ?", t.Table, t.Column), []interface{}{"%" + qValue.Field(i).String() + "%"})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` like ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{"%" + qValue.Field(i).String() + "%"})
 	case "gt":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` > ?", t.Table, t.Column), []interface{}{qValue.Field(i).Interface()})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` > ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{qValue.Field(i).Interface()})
 	case "gte":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` >= ?", t.Table, t.Column), []interface{}{qValue.Field(i).Interface()})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` >= ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{qValue.Field(i).Interface()})
 	case "lt":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` < ?", t.Table, t.Column), []interface{}{qValue.Field(i).Interface()})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` < ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{qValue.Field(i).Interface()})
 	case "lte":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` <= ?", t.Table, t.Column), []interface{}{qValue.Field(i).Interface()})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` <= ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{qValue.Field(i).Interface()})
 	case "startswith", "istartswith":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` like ?", t.Table, t.Column), []interface{}{qValue.Field(i).String() + "%"})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` like ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{qValue.Field(i).String() + "%"})
 	case "endswith", "iendswith":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` like ?", t.Table, t.Column), []interface{}{"%" + qValue.Field(i).String()})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` like ?", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{"%" + qValue.Field(i).String()})
 	case "in":
-		condition.SetWhere(fmt.Sprintf("`%s`.`%s` in (?)", t.Table, t.Column), []interface{}{qValue.Field(i).Interface()})
+		condition.SetWhere(fmt.Sprintf("`%s`.`%s` in (?)", getAlias(t, condition.GetAliasMap()), t.Column), []interface{}{qValue.Field(i).Interface()})
 	case "isnull":
 		if !(qValue.Field(i).IsZero() && qValue.Field(i).IsNil()) {
-			condition.SetWhere(fmt.Sprintf("`%s`.`%s` isnull", t.Table, t.Column), make([]interface{}, 0))
+			condition.SetWhere(fmt.Sprintf("`%s`.`%s` isnull", getAlias(t, condition.GetAliasMap()), t.Column), make([]interface{}, 0))
 		}
 	case "order":
 		switch strings.ToLower(qValue.Field(i).String()) {
 		case "desc", "asc":
-			condition.SetOrder(fmt.Sprintf("`%s`.`%s` %s", t.Table, t.Column, qValue.Field(i).String()))
+			condition.SetOrder(fmt.Sprintf("`%s`.`%s` %s", getAlias(t, condition.GetAliasMap()), t.Column, qValue.Field(i).String()))
 		}
 	}
 }
+
+// 辅助函数：根据 AliasMap 获取列名的最终引用
+func getAlias(t *resolveSearchTag, aliasMap map[string]string) string {
+	if alias, exists := aliasMap[t.Table]; exists {
+		return alias
+	}
+	return t.Table
+}
+
+// 辅助函数：根据 AliasMap 获取列名的最终引用
+//func getAlias(t *resolveSearchTag, aliasMap map[string]string) string {
+//	if alias, exists := aliasMap[t.Table]; exists {
+//		return fmt.Sprintf("%s.%s", alias, t.Column)
+//	}
+//	return fmt.Sprintf("%s.%s", t.Table, t.Column)
+//}
